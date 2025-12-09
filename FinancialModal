@@ -1,0 +1,177 @@
+// FinancialModal.jsx
+import React, { useMemo, useState, useEffect } from 'react';
+import PropTypes from 'prop-types';
+import { Modal, ModalHeader, CardRounded, ProgressCircle, Label } from '@americanexpress/dls-react';
+import BaseTable from './BaseTable';
+import { formatNumberWithComma } from '../utilities';
+import './FinancialTable.css';
+
+/**
+ * Props:
+ * - shown, onClose, selectedDirector, selectedEpic
+ * - featureData: the raw payload returned from feature API (featureData.body)
+ * - isLoading, isError
+ * The modal contains a feature-level table with expandable rows for artifacts.
+ */
+const FinancialModal = ({
+  shown,
+  onClose,
+  selectedDirector,
+  selectedEpic,
+  featureData,
+  isLoading,
+  isError,
+  alerts,
+}) => {
+  // Build feature rows and nested artifact rows from featureData
+  const [rows, setRows] = useState([]);
+
+  useEffect(() => {
+    if (!featureData?.featureData) {
+      setRows([]);
+      return;
+    }
+    const fd = featureData.featureData;
+    // fd is an object mapping projectName -> { monthlyData: {...}, nextMonthForecastCost, drillDown: [...] }
+    const projectKeys = Object.keys(fd || {});
+    const rowsBuilt = projectKeys.map((projectName) => {
+      const details = fd[projectName];
+      // monthly formatted values
+      const monthly = (details?.monthlyData && typeof details.monthlyData === 'object')
+        ? Object.fromEntries(Object.entries(details.monthlyData).map(([k, v]) => [k, formatNumberWithComma(v)]))
+        : {};
+      // drillDown array is used as nested artifact rows
+      const subRows = Array.isArray(details.drillDown) ? details.drillDown.map((artifact) => ({
+        ...artifact,
+        // ensure artifact columns like 'Artifact Id' etc exist
+      })) : [];
+      return {
+        name: projectName,
+        nextMonthForecastCost: details.nextMonthForecastCost ? formatNumberWithComma(details.nextMonthForecastCost) : 0,
+        ...monthly,
+        subRows,
+      };
+    });
+    setRows(rowsBuilt);
+  }, [featureData]);
+
+  const featureColumns = useMemo(() => {
+    // dynamic month columns from first row
+    const monthCols = [];
+    if (rows.length > 0) {
+      const first = rows[0];
+      Object.keys(first).forEach((k) => {
+        if (k !== 'name' && k !== 'subRows' && k !== 'nextMonthForecastCost') {
+          monthCols.push({
+            accessorKey: k,
+            header: k,
+            cell: (info) => info.getValue() ?? 0,
+            meta: { minWidth: '8rem' },
+          });
+        }
+      });
+    }
+    return [
+      {
+        id: 'expander',
+        header: () => null,
+        cell: ({ row, table }) => (
+          <button
+            className="ft-expand-btn"
+            onClick={(e) => {
+              e.stopPropagation();
+              row.toggleExpanded();
+            }}
+            aria-label="Toggle expand"
+          >
+            {row.getIsExpanded() ? '−' : '+'}
+          </button>
+        ),
+        meta: { minWidth: '3rem' },
+      },
+      {
+        accessorKey: 'name',
+        header: 'FEATURE ID',
+        cell: (info) => info.getValue(),
+        meta: { minWidth: '12rem' },
+      },
+      {
+        accessorKey: 'nextMonthForecastCost',
+        header: 'NEXT MONTH FORECASTED COST',
+        cell: (info) => info.getValue(),
+        meta: { minWidth: '12rem' },
+      },
+      ...monthCols,
+    ];
+  }, [rows]);
+
+  // nested artifact columns (consistent)
+  const artifactColumns = useMemo(() => [
+    { accessorKey: 'Artifact Id', header: 'Artifact ID', meta: { minWidth: '8rem' }, cell: (c) => c.getValue() },
+    { accessorKey: 'Name', header: 'NAME', meta: { minWidth: '12rem' }, cell: (c) => c.getValue() },
+    { accessorKey: 'Release', header: 'RELEASE', meta: { minWidth: '8rem' }, cell: (c) => c.getValue() },
+    { accessorKey: 'Iteration', header: 'ITERATION', meta: { minWidth: '8rem' }, cell: (c) => c.getValue() },
+    { accessorKey: 'Schedule State', header: 'SCHEDULED STATE', meta: { minWidth: '8rem' }, cell: (c) => c.getValue() },
+    { accessorKey: 'Parent Id', header: 'PARENT ID', meta: { minWidth: '8rem' }, cell: (c) => c.getValue() },
+    { accessorKey: 'E Container', header: 'E_CONTAINER', meta: { minWidth: '8rem' }, cell: (c) => c.getValue() },
+    { accessorKey: 'Planned Estimate Total Number', header: 'PLANNED ESTIMATE TOTAL NUMBER', meta: { minWidth: '8rem' }, cell: (c) => c.getValue() },
+    { accessorKey: 'Month', header: 'MONTH', meta: { minWidth: '6rem' }, cell: (c) => c.getValue() },
+    { accessorKey: 'Year', header: 'YEAR', meta: { minWidth: '6rem' }, cell: (c) => c.getValue() },
+    { accessorKey: 'Last Updated Date', header: 'LAST UPDATED DATE', meta: { minWidth: '8rem' }, cell: (c) => c.getValue() },
+  ], []);
+
+  return (
+    <div className="modalCustomStyle">
+      <Modal
+        data-testid="modal-fd"
+        shown={shown}
+        closeOnOverlayClick
+        preTransition
+        className="row financial-modal"
+        onClose={onClose}
+      >
+        <ModalHeader className="flex flex-justify-between dls-gray-03-bg">
+          <Label>{selectedDirector} - {selectedEpic}</Label>
+        </ModalHeader>
+
+        <CardRounded>
+          <CardRounded style={{ alignSelf: 'center', display: 'contents', textAlign: 'center' }}>
+            {isLoading && <div><ProgressCircle /></div>}
+            {isError && <div className="ft-error">Failed to fetch data...!!</div>}
+            {alerts && <div className="ft-alert">{alerts}</div>}
+
+            {!isLoading && !isError && (
+              <BaseTable
+                columns={featureColumns}
+                data={rows}
+                enableExpand={true}
+                renderSubRow={(originalRow) => {
+                  // originalRow contains 'subRows' array of artifacts
+                  const artifacts = originalRow.subRows || [];
+                  return (
+                    <div className="ft-subtable-container">
+                      <BaseTable columns={artifactColumns} data={artifacts} enableExpand={false} />
+                    </div>
+                  );
+                }}
+              />
+            )}
+          </CardRounded>
+        </CardRounded>
+      </Modal>
+    </div>
+  );
+};
+
+FinancialModal.propTypes = {
+  shown: PropTypes.bool,
+  onClose: PropTypes.func,
+  selectedDirector: PropTypes.string,
+  selectedEpic: PropTypes.string,
+  featureData: PropTypes.object,
+  isLoading: PropTypes.bool,
+  isError: PropTypes.bool,
+  alerts: PropTypes.string,
+};
+
+export default FinancialModal;
